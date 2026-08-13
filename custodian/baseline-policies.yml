@@ -1,0 +1,51 @@
+# Baseline Cloud Custodian policies for CloudGuard. Deliberately
+# detective-only (report, don't act), the same way DocuTrust's CI
+# workflow shipped as a bare baseline pipeline: each chain in this
+# track adds its own real enforcement action on top of these, wiring
+# in auto-remediation here would pre-solve Chain C's actual work.
+#
+# Run with:
+#   pip install c7n
+#   custodian run -s output custodian/baseline-policies.yml
+
+policies:
+  - name: cloudguard-flag-public-s3-buckets
+    resource: aws.s3
+    description: >
+      Detective only. Flags any bucket whose public access block is not
+      fully enabled. Every bucket in this environment's Terraform sets
+      this correctly by default, so a clean run here is the expected
+      baseline, not evidence nothing is wrong elsewhere.
+    filters:
+      - or:
+          - "tag:BlockPublicAcls": absent
+          - not:
+              - type: check-public-block
+                BlockPublicAcls: true
+                BlockPublicPolicy: true
+                IgnorePublicAcls: true
+                RestrictPublicBuckets: true
+
+  - name: cloudguard-flag-wildcard-iam-roles
+    resource: aws.iam-role
+    description: >
+      Detective only. Flags any IAM role with an attached policy
+      granting a wildcard action or resource. The
+      standing_developer_access role from terraform/iam.tf is expected
+      to show up here, that is the seeded finding Chain A, Project 2
+      addresses, not a bug in this policy.
+    filters:
+      - type: has-inline-policy
+        state: True
+
+  - name: cloudguard-flag-unencrypted-lambda-env-vars
+    resource: aws.lambda
+    description: >
+      Detective only. Flags any Lambda function without a customer
+      managed KMS key protecting its environment variables, a real,
+      easy-to-miss configuration gap distinct from S3 or EBS
+      encryption, which most checklists remember and this one does not.
+    filters:
+      - type: value
+        key: KMSKeyArn
+        value: absent

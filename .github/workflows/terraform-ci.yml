@@ -1,0 +1,33 @@
+name: Terraform CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  fmt-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform fmt check
+        run: terraform -chdir=terraform fmt -check -recursive
+
+      - name: Terraform init
+        run: terraform -chdir=terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform -chdir=terraform validate
+
+  # Every stage below this line is a deliberate placeholder, the same
+  # pattern DocuTrust's baseline pipeline used. Chain A adds IAM
+  # right-sizing checks, Chain B adds Cloud Custodian policy gates and
+  # drift detection, Chain C adds automated compliance scanning against
+  # this exact config. Wiring any of it in here would pre-solve that
+  # chain's work.

@@ -47,8 +47,7 @@ didn't write yourself, review it, don't trust it blindly.
   automation to it
 
 ## Seeded findings, intentional, documented, and load-bearing
-Same standard practice as DocuTrust: every finding below is commented
-at its exact location in the Terraform, and should not be "fixed"
+Every finding below is commented at its exact location in the Terraform, and should not be "fixed"
 outside the project it belongs to.
 
 - **An over-permissioned Lambda execution role**

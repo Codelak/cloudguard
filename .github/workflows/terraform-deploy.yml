@@ -50,26 +50,17 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
 
-      # DIAGNOSTIC - temporary. Remove once the trust policy is confirmed
-      # to match what GitHub actually sends.
+      # The sub claim this role's trust policy matches on is NOT the form
+      # the documentation shows. GitHub sends the owner and repository
+      # names with their immutable numeric IDs appended:
       #
-      # The trust policy's sub condition has to name the exact string
-      # GitHub puts in the token: repo:OWNER/REPO:ref:refs/heads/BRANCH.
-      # If any part of it is wrong the assume fails with a generic "not
-      # authorized", which tells you nothing about which claim disagreed.
-      # The token is a JWT and its middle segment is readable, so this
-      # step prints the claims instead of guessing at them.
-      - name: Inspect the OIDC token claims
-        run: |
-          TOKEN=$(curl -sS \
-            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
-            | jq -r .value)
-          echo "$TOKEN" \
-            | cut -d. -f2 \
-            | tr '_-' '/+' \
-            | base64 -d 2>/dev/null \
-            | jq '{sub, aud, iss, repository, ref, event_name}'
+      #   repo:Codelak@131853901/cloudguard@1368734941:ref:refs/heads/main
+      #
+      # That was established by decoding the token this job mints, after
+      # an earlier assume failed with a generic "not authorized" that
+      # named no claim. See section 4.4 of the walkthrough. If this
+      # repository is ever transferred or recreated, the IDs change and
+      # this condition has to change with them.
 
       # No AWS_ACCESS_KEY_ID, no AWS_SECRET_ACCESS_KEY, no repository
       # secret of any kind. The action asks GitHub for an OIDC token,

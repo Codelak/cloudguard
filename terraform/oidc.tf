@@ -59,7 +59,27 @@ data "aws_iam_policy_document" "github_actions_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:Codelak/cloudguard:ref:refs/heads/main"]
+
+      # GitHub does NOT send repo:OWNER/REPO:ref:... in this claim, which
+      # is what the AWS documentation and every tutorial show. It sends
+      # the owner and repository names with their immutable numeric IDs
+      # appended:
+      #
+      #   repo:Codelak@131853901/cloudguard@1368734941:ref:refs/heads/main
+      #
+      # That was established by decoding the token this workflow mints,
+      # not by reading the docs. An earlier StringEquals against the
+      # documented form failed with a generic "not authorized" that named
+      # no claim at all, and no amount of re-reading the trust policy
+      # would have revealed why.
+      #
+      # The IDs are the point rather than an inconvenience. Names are
+      # mutable: a repository can be renamed, and a deleted name can be
+      # re-registered by somebody else. A name-only condition would then
+      # trust whatever repository next held that name. The IDs cannot
+      # change, so this matches one specific repository for as long as it
+      # exists.
+      values = ["repo:Codelak@131853901/cloudguard@1368734941:ref:refs/heads/main"]
     }
   }
 }

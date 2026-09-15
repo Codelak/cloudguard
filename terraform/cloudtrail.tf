@@ -59,5 +59,26 @@ resource "aws_cloudtrail" "main" {
   is_multi_region_trail         = true
   enable_log_file_validation    = true
 
+  # S3 object-level activity is recorded as DATA events, not management
+  # events, and data events are off by default. Without this selector the
+  # trail cannot see a single GetObject or PutObject, which means it
+  # cannot answer the one question Chain A, Project 1 exists to ask: what
+  # does the process_upload role actually do with S3?
+  #
+  # Scoped to the uploads bucket rather than the whole account, because
+  # data events bill per event recorded and that bucket is the only one
+  # this function touches. Widening it to arn:aws:s3::: would also pull
+  # in every other identity in the account that happens to use S3, which
+  # is noise the analysis does not need.
+  event_selector {
+    read_write_type           = "All"
+    include_management_events = true
+
+    data_resource {
+      type   = "AWS::S3::Object"
+      values = ["${aws_s3_bucket.uploads.arn}/"]
+    }
+  }
+
   depends_on = [aws_s3_bucket_policy.cloudtrail_logs]
 }

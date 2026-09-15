@@ -19,6 +19,17 @@ on:
         description: "Apply the plan? Leave unchecked to plan only."
         type: boolean
         default: false
+
+      # One-off, and deliberately narrow. The static key this workflow
+      # replaces cannot delete itself: deactivating it locks the machine
+      # that holds it out of IAM entirely, and deleting a key needs
+      # credentials. This input exists so the OIDC role can retire the
+      # credential it replaced. Guarded so it cannot fire by accident,
+      # and removed once it has served its purpose.
+      retire_static_key:
+        description: "Delete the legacy static access key AKIA4MTWG7DGUZPZZA5Y?"
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -111,6 +122,22 @@ jobs:
             echo "FAIL no session token - these are long-lived credentials"
             exit 1
           fi
+
+      # Runs only when explicitly asked for. Deletes the long-lived key
+      # that this workflow's own OIDC credential replaces - the key
+      # cannot delete itself, because a deactivated key has no remaining
+      # permissions and deleting one requires authentication.
+      - name: Retire the static access key
+        if: ${{ inputs.retire_static_key }}
+        run: |
+          echo "Deleting AKIA4MTWG7DGUZPZZA5Y"
+          aws iam delete-access-key \
+            --user-name cloudguard-deploy \
+            --access-key-id AKIA4MTWG7DGUZPZZA5Y
+
+          echo ""
+          echo "Access keys remaining for cloudguard-deploy:"
+          aws iam list-access-keys --user-name cloudguard-deploy
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

@@ -19,17 +19,6 @@ on:
         description: "Apply the plan? Leave unchecked to plan only."
         type: boolean
         default: false
-
-      # One-off, and deliberately narrow. The static key this workflow
-      # replaces cannot delete itself: deactivating it locks the machine
-      # that holds it out of IAM entirely, and deleting a key needs
-      # credentials. This input exists so the OIDC role can retire the
-      # credential it replaced. Guarded so it cannot fire by accident,
-      # and removed once it has served its purpose.
-      retire_static_key:
-        description: "Delete the legacy static access key AKIA4MTWG7DGUZPZZA5Y?"
-        type: boolean
-        default: false
   push:
     branches: [main]
 
@@ -123,21 +112,15 @@ jobs:
             exit 1
           fi
 
-      # Runs only when explicitly asked for. Deletes the long-lived key
-      # that this workflow's own OIDC credential replaces - the key
-      # cannot delete itself, because a deactivated key has no remaining
-      # permissions and deleting one requires authentication.
-      - name: Retire the static access key
-        if: ${{ inputs.retire_static_key }}
-        run: |
-          echo "Deleting AKIA4MTWG7DGUZPZZA5Y"
-          aws iam delete-access-key \
-            --user-name cloudguard-deploy \
-            --access-key-id AKIA4MTWG7DGUZPZZA5Y
-
-          echo ""
-          echo "Access keys remaining for cloudguard-deploy:"
-          aws iam list-access-keys --user-name cloudguard-deploy
+      # A one-off step lived here that deleted the legacy static access
+      # key this workflow replaces. It is removed deliberately rather than
+      # kept "just in case": a permanent capability to delete IAM keys by
+      # name is a footgun, and nothing in a deploy pipeline needs it.
+      #
+      # It existed because the key could not delete itself. Deactivating
+      # it locked the machine holding it out of IAM, and deleting a key
+      # requires credentials - so the credential that replaced the key was
+      # what retired it. The run is in the repository's Actions history.
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3

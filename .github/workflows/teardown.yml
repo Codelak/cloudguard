@@ -1,0 +1,132 @@
+name: Teardown (temporary)
+
+# TEMPORARY. Exists to remove the Project 1 environment from the retired
+# personal account, and is deleted once that is done.
+#
+# Why CI rather than a laptop: Project 1's deliverable 6 deleted the static
+# access key that account was built with, so no credential for it exists on
+# any machine any more. The OIDC deploy role is the only identity left that
+# can reach it — which is the same "a credential cannot revoke itself"
+# finding this project documented, one level up.
+#
+# Two traps this workflow exists to get around:
+#
+#   1. terraform destroy aborts on a non-empty bucket, and the uploads
+#      bucket has versioning enabled, so `aws s3 rm --recursive` is not
+#      enough — versions and delete markers survive it. The override file
+#      generated at runtime sets force_destroy, which makes the S3 provider
+#      remove every version as part of the delete.
+#
+#   2. The state bucket and the lock table were bootstrapped out of band and
+#      are NOT in Terraform state, so destroy leaves them behind. They are
+#      removed by hand at the end, in the SAME run — because destroy also
+#      removes the OIDC role this job authenticated with, and no future run
+#      could reach the account to clean up after it.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Actually destroy? Leave unchecked for a dry run."
+        type: boolean
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: teardown
+  cancel-in-progress: false
+
+jobs:
+  teardown:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Assume the deploy role via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::851725187277:role/cloudguard-github-actions-deploy
+          aws-region: us-east-1
+
+      - name: Prove which identity is running
+        run: aws sts get-caller-identity
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform init
+        run: terraform -chdir=terraform init
+
+      # Generated at runtime, never committed. A *_override.tf file merges
+      # with the configuration that is already there, so force_destroy can
+      # be switched on without editing the resources themselves.
+      - name: Allow the buckets to be destroyed with their contents
+        run: |
+          cat > terraform/zz_teardown_override.tf <<'EOF'
+          resource "aws_s3_bucket" "uploads"         { force_destroy = true }
+          resource "aws_s3_bucket" "cloudtrail_logs" { force_destroy = true }
+          resource "aws_s3_bucket" "lambda_artifacts" { force_destroy = true }
+          resource "aws_s3_bucket" "legacy_exports"  { force_destroy = true }
+          EOF
+
+      # The dry run ends here. Dispatch without the tick and read this.
+      - name: Terraform plan (destroy)
+        run: terraform -chdir=terraform plan -destroy -no-color -lock-timeout=5m
+
+      # force_destroy has to be recorded in state before destroy can use it,
+      # so this applies the override on its own first. It changes nothing
+      # about the buckets except that attribute.
+      - name: Record force_destroy in state
+        if: ${{ inputs.confirm_destroy }}
+        run: terraform -chdir=terraform apply -auto-approve -lock-timeout=5m
+
+      - name: Terraform destroy
+        if: ${{ inputs.confirm_destroy }}
+        run: terraform -chdir=terraform destroy -auto-approve -lock-timeout=5m
+
+      # Runs in the same job, so the session obtained above is still valid
+      # even though the role that issued it has just been destroyed.
+      - name: Remove what Terraform does not manage
+        if: ${{ inputs.confirm_destroy }}
+        run: |
+          set -euo pipefail
+
+          empty_bucket() {
+            local B="$1" n
+            for kind in Versions DeleteMarkers; do
+              while :; do
+                n=$(aws s3api list-object-versions --bucket "$B" --max-keys 1000 \
+                      --query "length(${kind} || \`[]\`)" --output text 2>/dev/null || echo 0)
+                [ "$n" = "0" ] && break
+                aws s3api list-object-versions --bucket "$B" --max-keys 1000 \
+                  --query "{Objects: ${kind}[].{Key:Key,VersionId:VersionId}}" --output json \
+                  | jq -c '{Objects: .Objects, Quiet: true}' > /tmp/del.json
+                aws s3api delete-objects --bucket "$B" --delete file:///tmp/del.json >/dev/null
+              done
+            done
+            echo "emptied $B"
+          }
+
+          empty_bucket cloudguard-tfstate-851725187277
+          aws s3api delete-bucket --bucket cloudguard-tfstate-851725187277
+          echo "deleted the state bucket"
+
+          aws dynamodb delete-table --table-name cloudguard-tfstate-lock >/dev/null
+          echo "deleted the lock table"
+
+      - name: What remains in the account
+        if: ${{ inputs.confirm_destroy }}
+        run: |
+          echo "Buckets:";   aws s3api list-buckets --query 'Buckets[].Name' --output text
+          echo "KMS keys:";  aws kms list-keys --query 'Keys[].KeyId' --output text
+          echo "Roles:";     aws iam list-roles \
+                               --query 'Roles[?starts_with(RoleName,`cloudguard`)].RoleName' --output text
+          echo "Tables:";    aws dynamodb list-tables --query 'TableNames' --output text
+          echo "(a CloudTrail trail and a Lambda may also survive a failed run)"
